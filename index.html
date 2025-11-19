@@ -142,50 +142,47 @@ try {
   const T = days / 365;
   const r = 0.045;
 
-  /* ----  sanitize IV  ---- */
-  if (!iv || iv <= 0 || iv > 5) iv = 0.25;   // 5 = 500 % cap
-  /* ----------------------- */
+  /* ----  safe IV  ---- */
+  if (!iv || iv <= 0 || iv > 5) iv = 0.25;
 
+  /* ----  black-scholes  ---- */
   const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
   const d2 = d1 - iv * Math.sqrt(T);
-  
-  /* ----  normal CDF (no Math.erf)  ---- */
-function nd(x){
-  // Abramowitz & Stegun 7.1.26 – max error 1.5e-7
-  const a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741,
-        a4 = -1.453152027, a5 =  1.061405429,  p  =  0.3275911;
-  const sign = x >= 0 ? 1 : -1;
-  x = Math.abs(x) / Math.sqrt(2);
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return 0.5 * (1 + sign * y);
-}
-/* ------------------------------------ */
+  function nd(x){
+    const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+    const sign=x>=0?1:-1; x=Math.abs(x)/Math.sqrt(2);
+    const t=1/(1+p*x),y=1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+    return 0.5*(1+sign*y);
+  }
   const putDelta = nd(d1) - 1;
-  const probOTM = nd(d2);
-  const prem = sell * 100;
-  const maxLoss = (k - sell) * 100;
-  const be = k - sell;
-  const ror = (prem / maxLoss) * 100;
-  const ann = ror * (365 / days);
-  const ev = probOTM * prem - (1 - probOTM) * maxLoss;
-  setStatus('Done!', 100);
-    /* =====  FILL THE UI  ===== */
-  $('#prob').textContent   = fmt(probOTM * 100, 1);
-  $('#delta').textContent  = fmt(-putDelta, 3);        // seller delta
-  $('#otm').textContent    = fmt(((S - k) / S) * 100, 1);
-  $('#prem').textContent   = '$' + fmt(prem);
-  $('#maxp').textContent   = '$' + fmt(prem);
-  $('#be').textContent     = '$' + fmt(be);
-  $('#dte').textContent    = days;
-  $('#aret').textContent   = fmt(ann, 1);
-  $('#ror').textContent    = fmt(ror, 1);
-  $('#ev').textContent     = '$' + fmt(ev);
-  const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
-  $('#risk').textContent   = riskLvl;
-  $('#risk').className     = 'metric-value risk-' + riskLvl.toLowerCase();
+  const probOTM  = nd(d2);
 
-  /* earnings hint (optional) */
+  /* ----  seller metrics  ---- */
+  const prem     = sell * 100;
+  const maxLoss  = (k - sell) * 100;
+  const be       = k - sell;
+  const ror      = (prem / maxLoss) * 100;
+  const ann      = ror * (365 / days);
+  const ev       = probOTM * prem - (1 - probOTM) * maxLoss;
+
+  setStatus('Done!', 100);
+
+  /* =====  FILL THE UI  ===== */
+  $('#prob').textContent = fmt(probOTM * 100, 1);
+  $('#delta').textContent= fmt(-putDelta, 3);
+  $('#otm').textContent  = fmt(((S - k) / S) * 100, 1);
+  $('#prem').textContent = '$' + fmt(prem);
+  $('#maxp').textContent = '$' + fmt(prem);
+  $('#be').textContent   = '$' + fmt(be);
+  $('#dte').textContent  = days;
+  $('#aret').textContent = fmt(ann, 1);
+  $('#ror').textContent  = fmt(ror, 1);
+  $('#ev').textContent   = '$' + fmt(ev);
+  const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+  $('#risk').textContent = riskLvl;
+  $('#risk').className   = 'metric-value risk-' + riskLvl.toLowerCase();
+
+  /* earnings hint */
   if (opts && opts.options?.[0]?.expirationDates) {
     const earnDates = opts.options[0].expirationDates.map(ts => new Date(ts * 1000));
     const closest   = earnDates.find(d => d > now && d < exp);
@@ -200,7 +197,6 @@ function nd(x){
   console.error('Math error:', e);
   $('#err').textContent = 'Math error – check strike / expiry / IV.';
   hideProgress();
-  return;
 }
 
 
