@@ -53,83 +53,126 @@
     </div>
   </div>
 
-  <script>
-    const $ = q => document.querySelector(q);
-    const fmt = (n, d = 2) => (+n || 0).toFixed(d);
-    const yahoo = async (url) => {
-      const proxy = 'https://api.allorigins.win/raw?url=';
-      return fetch(proxy + encodeURIComponent(url))
-        .then(r => r.json())
-        .catch(() => null);
-    };
-    const getQuote = async (s) => {
-      const data = await yahoo(`https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1d&range=1mo`);
-      return data?.chart?.result?.[0];
-    };
-    const getOpts = async (s) => {
-      const data = await yahoo(`https://query1.finance.yahoo.com/v7/finance/options/${s}`);
-      return data?.optionChain?.result?.[0];
-    };
+  <!-- ============  REPLACE THE OLD SCRIPT BLOCK ENTIRELY  ============ -->
+<script>
+const $ = q => document.querySelector(q);
+const fmt = (n, d = 2) => (+n || 0).toFixed(d);
 
-    $('#form').addEventListener('submit', async e => {
-      e.preventDefault();
-      $('#load').classList.remove('hidden');
-      $('#err').textContent = '';
-      $('#res').classList.add('hidden');
-      const sym = $('#sym').value.toUpperCase();
-      const k = parseFloat($('#k').value);
-      const sell = parseFloat($('#pr').value);
-      const exp = new Date($('#exp').value);
-      const now = new Date();
-      const days = Math.ceil((exp - now) / 864e5);
-      if (days <= 0) return $('#err').textContent = 'Expiry must be in the future';
+/* ----------  PROGRESS-BAR HELPERS  ---------- */
+const statusEl = $('#status');          // text line
+const progressBar = $('#progress');     // the bar itself
+const progressBox = $('#progressBox');  // container so we can hide/show
 
-      const quote = await getQuote(sym);
-      if (!quote) return $('#err').textContent = 'Symbol not found';
-      const S = quote.meta.regularMarketPrice;
-      const r = 0.045; // risk-free
-      const opts = await getOpts(sym);
-      let iv = 0.25; // fallback
-      if (opts) {
-        const chain = opts.options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
-        iv = (chain?.impliedVolatility || iv) * 0.01;
-      }
-      const T = days / 365;
-      const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
-      const d2 = d1 - iv * Math.sqrt(T);
-      const nd = x => 0.5 * (1 + Math.erf(x / Math.SQRT2));
-      const putDelta = nd(d1) - 1;
-      const probOTM = nd(d2);
-      const prem = sell * 100;
-      const maxLoss = (k - sell) * 100;
-      const be = k - sell;
-      const ror = (prem / maxLoss) * 100;
-      const ann = ror * (365 / days);
-      const ev = probOTM * prem - (1 - probOTM) * maxLoss;
-      const risk = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+function setStatus(txt, pct = 0) {
+  if (statusEl) statusEl.textContent = txt;
+  if (progressBar) progressBar.style.width = pct + '%';
+}
+function hideProgress() {
+  if (progressBox) progressBox.classList.add('hidden');
+}
+function showProgress() {
+  if (progressBox) progressBox.classList.remove('hidden');
+}
 
-      $('#prob').textContent = fmt(probOTM * 100, 1);
-      $('#delta').textContent = fmt(-putDelta, 3); // seller delta
-      $('#otm').textContent = fmt(((S - k) / S) * 100, 1);
-      $('#prem').textContent = '$' + fmt(prem);
-      $('#maxp').textContent = '$' + fmt(prem);
-      $('#be').textContent = '$' + fmt(be);
-      $('#dte').textContent = days;
-      $('#aret').textContent = fmt(ann, 1);
-      $('#ror').textContent = fmt(ror, 1);
-      $('#ev').textContent = '$' + fmt(ev);
-      $('#risk').textContent = risk;
-      $('#risk').className = 'metric-value risk-' + risk.toLowerCase();
-      $('#earn').classList.add('hidden');
-      if (opts) {
-        const earn = opts.options[0]?.expirationDates.map(e => new Date(e * 1000));
-        const closest = earn?.find(d => d > now && d < exp);
-        if (closest) $('#earn').textContent = `⚠️ Earnings expected around ${closest.toLocaleDateString()}`;
-        $('#earn').classList.remove('hidden');
-      }
-      $('#load').classList.add('hidden');
-      $('#res').classList.remove('hidden');
-    });
-  </script>
-</body>
+/* ----------  YAHOO FETCH (with progress)  ---------- */
+async function yahoo(url) {
+  const proxy = 'https://api.allorigins.win/raw?url=';
+  return fetch(proxy + encodeURIComponent(url))
+         .then(r => r.json())
+         .catch(() => null);
+}
+async function getQuote(sym) {
+  setStatus('Grabbing quote…', 25);
+  const data = await yahoo(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
+  return data?.chart?.result?.[0];
+}
+async function getOpts(sym) {
+  setStatus('Grabbing options…', 65);
+  const data = await yahoo(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
+  return data?.optionChain?.result?.[0];
+}
+
+/* ----------  MAIN ANALYSIS  ---------- */
+$('#form').addEventListener('submit', async e => {
+  e.preventDefault();
+
+  // --- reset UI ---
+  $('#err').textContent = '';
+  $('#res').classList.add('hidden');
+  showProgress();
+  setStatus('Starting…', 0);
+
+  const sym = $('#sym').value.toUpperCase();
+  const k   = parseFloat($('#k').value);
+  const sell = parseFloat($('#pr').value);
+  const exp = new Date($('#exp').value);
+  const now = new Date();
+  const days = Math.ceil((exp - now) / 864e5);
+
+  if (days <= 0) {
+    $('#err').textContent = 'Expiry must be in the future';
+    hideProgress(); return;
+  }
+
+  const quote = await getQuote(sym);
+  if (!quote) {
+    $('#err').textContent = 'Symbol not found (or network error)';
+    hideProgress(); return;
+  }
+  const S = quote.meta.regularMarketPrice;
+
+  const opts = await getOpts(sym);
+  let iv = 0.25;
+  if (opts) {
+    const chain = opts.options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
+    if (chain) iv = chain.impliedVolatility * 0.01;
+  }
+
+  setStatus('Crunching numbers…', 90);
+  /* ----  black-scholes & seller maths  ---- */
+  const T = days / 365;
+  const r = 0.045;
+  const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
+  const d2 = d1 - iv * Math.sqrt(T);
+  const nd = x => 0.5 * (1 + Math.erf(x / Math.SQRT2));
+  const putDelta = nd(d1) - 1;
+  const probOTM = nd(d2);
+  const prem = sell * 100;
+  const maxLoss = (k - sell) * 100;
+  const be = k - sell;
+  const ror = (prem / maxLoss) * 100;
+  const ann = ror * (365 / days);
+  const ev = probOTM * prem - (1 - probOTM) * maxLoss;
+
+  setStatus('Done!', 100);
+
+  /* ----  fill results  ---- */
+  $('#prob').textContent = fmt(probOTM * 100, 1);
+  $('#delta').textContent = fmt(-putDelta, 3);
+  $('#otm').textContent  = fmt(((S - k) / S) * 100, 1);
+  $('#prem').textContent = '$' + fmt(prem);
+  $('#maxp').textContent = '$' + fmt(prem);
+  $('#be').textContent   = '$' + fmt(be);
+  $('#dte').textContent  = days;
+  $('#aret').textContent = fmt(ann, 1);
+  $('#ror').textContent  = fmt(ror, 1);
+  $('#ev').textContent   = '$' + fmt(ev);
+  const risk = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+  $('#risk').textContent = risk;
+  $('#risk').className = 'metric-value risk-' + risk.toLowerCase();
+
+  /* ----  earnings hint  ---- */
+  if (opts && opts.options[0]?.expirationDates) {
+    const earn = opts.options[0].expirationDates.map(e => new Date(e * 1000));
+    const closest = earn.find(d => d > now && d < exp);
+    if (closest) $('#earn').textContent = `⚠️  Earnings expected around ${closest.toLocaleDateString()}`;
+    $('#earn').classList.remove('hidden');
+  }
+
+  hideProgress();
+  $('#res').classList.remove('hidden');
+});
+</script>
+<!-- ============  END NEW SCRIPT  ============ -->
+ </body>
 </html>
