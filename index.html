@@ -61,7 +61,17 @@
       <div class="metric">Daily Earning <span id="dailyEarn" class="metric-value">--</span></div>
 
       <!-- NEW: IV with source -->
-      <div class="metric">IV <span id="ivVal" class="metric-value">--</span> <small id="ivSrc" style="color:#94a3b8"></small></div>
+      
+      <div class="metric">
+  IV
+  <span id="ivVal" class="metric-value">--</span>
+  <small id="ivSrc" style="color:#94a3b8"></small>
+  <!-- editable override appears only when assumed -->
+  <span id="ivEdit" class="hidden" style="margin-left:0.5rem">
+    <input id="ivInput" type="number" step="0.1" min="0" max="500" style="width:4.5rem;text-align:right;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:4px;padding:0.2rem 0.3rem;" title="% per year"> %
+    <button id="ivUpdate" class="iv-btn" style="margin-left:0.3rem;padding:0.2rem 0.5rem;font-size:0.75rem;background:var(--accent);border:none;border-radius:4px;color:#fff;cursor:pointer;">Update</button>
+  </span>
+</div>
       <div class="metric">Risk Level <span id="risk" class="metric-value">--</span></div>
       <div id="earn" class="hidden" style="margin-top:1rem;color:var(--amber)"></div>
     </div>
@@ -69,6 +79,8 @@
 
   <!-- ============  REPLACE THE OLD SCRIPT BLOCK ENTIRELY  ============ -->
 <script>
+let lastStockPrice = 0; // keeps last stock price for quick IV override
+  
 const $ = q => document.querySelector(q);
 const fmt = (n, d = 2) => (+n || 0).toFixed(d);
 
@@ -144,6 +156,7 @@ $('#form').addEventListener('submit', async e => {
   const quote = await getQuote(sym);
   if (!quote?.chart?.result?.[0]) { $('#err').textContent = 'Symbol not found'; hideProgress(); return; }
   const S = quote.chart.result[0].meta.regularMarketPrice;
+  lastStockPrice = S; // save for IV override
 
   const opts = await getOpts(sym);
   let iv = 0.25, src = 'Assumed 25%'; // declare src
@@ -168,13 +181,30 @@ $('#form').addEventListener('submit', async e => {
     const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
     const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
 
+
+    
     setStatus('Done!', 100);
     $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
     $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#prem').textContent = '$' + fmt(prem);
     $('#maxp').textContent = '$' + fmt(prem); $('#be').textContent = '$' + fmt(be); $('#dte').textContent = days;
     $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#ev').textContent = '$' + fmt(ev);
     $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
-    $('#ivSrc').textContent = '(source: ' + src + ')'; $('#risk').textContent = riskLvl;
+    $('#ivSrc').textContent = '(source: ' + src + ')';
+    /* =====  IV override logic  ===== */
+  if (src === 'Assumed 25%') {           // only when no real data
+    $('#ivEdit').classList.remove('hidden');
+    $('#ivInput').value = fmt(iv * 100, 1);
+    $('#ivUpdate').onclick = () => {
+    const userIV = parseFloat($('#ivInput').value);
+    if (userIV > 0 && userIV <= 500) {   // sanity bounds
+      reCalculateWithIV(userIV / 100);   // re-run math
+    }
+  };
+} else {                               // live data – lock the field
+  $('#ivEdit').classList.add('hidden');
+}
+/* =============================== */
+    $('#risk').textContent = riskLvl;
     $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
 
     if (opts?.optionChain?.result?.[0]?.options?.[0]?.expirationDates) {
@@ -188,6 +218,35 @@ $('#form').addEventListener('submit', async e => {
     hideProgress();
   }
 });
+
+  /* ----------  re-run only the math / UI with new IV  ---------- */
+function reCalculateWithIV(newIV) {
+  hideProgress(); setStatus('Recalculating…', 50);
+  try {
+    const T = days / 365, r = 0.045, k = parseFloat($('#k').value), S = lastStockPrice;
+    const d1 = (Math.log(S / k) + (r + 0.5 * newIV * newIV) * T) / (newIV * Math.sqrt(T));
+    const d2 = d1 - newIV * Math.sqrt(T);
+    function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+      const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+      return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+    const putDelta = nd(d1) - 1, probOTM = nd(d2);
+    const prem = parseFloat($('#pr').value) * 100, maxLoss = (k - parseFloat($('#pr').value)) * 100;
+    const be = k - parseFloat($('#pr').value), ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
+    const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+    const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+
+    setStatus('Done!', 100);
+    $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
+    $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#ev').textContent = '$' + fmt(ev);
+    $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+    $('#ivVal').textContent = fmt(newIV * 100, 1) + '%'; $('#ivSrc').textContent = '(user override)';
+    $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+    hideProgress();
+  } catch (e) {
+    console.error(e); $('#err').textContent = 'Override error – check IV.';
+    hideProgress();
+  }
+}
 </script>
 <!-- ============  END NEW SCRIPT  ============ -->
  </body>
