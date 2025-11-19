@@ -57,6 +57,11 @@
       <div class="metric">Annual Ret <span id="aret" class="metric-value">--</span>%</div>
       <div class="metric">Return/Risk <span id="ror" class="metric-value">--</span>%</div>
       <div class="metric">Expected Val <span id="ev" class="metric-value">--</span></div>
+      <!-- NEW: Daily earning -->
+      <div class="metric">Daily Earning <span id="dailyEarn" class="metric-value">--</span></div>
+
+      <!-- NEW: IV with source -->
+      <div class="metric">IV <span id="ivVal" class="metric-value">--</span> <small id="ivSrc" style="color:#94a3b8"></small></div>
       <div class="metric">Risk Level <span id="risk" class="metric-value">--</span></div>
       <div id="earn" class="hidden" style="margin-top:1rem;color:var(--amber)"></div>
     </div>
@@ -178,6 +183,11 @@ try {
   $('#aret').textContent = fmt(ann, 1);
   $('#ror').textContent  = fmt(ror, 1);
   $('#ev').textContent   = '$' + fmt(ev);
+  /* ----  Daily earning & IV source  ---- */
+  const daily = prem / days;
+  $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+  $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
+  $('#ivSrc').textContent = opts && chain ? '(Yahoo real data)' : '(Assumed 25%)';
   const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
   $('#risk').textContent = riskLvl;
   $('#risk').className   = 'metric-value risk-' + riskLvl.toLowerCase();
