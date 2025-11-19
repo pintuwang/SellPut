@@ -139,9 +139,13 @@ $('#form').addEventListener('submit', async e => {
 
   setStatus('Crunching numbers…', 90);
 try {
-  /* ----  black-scholes & seller maths  ---- */
   const T = days / 365;
   const r = 0.045;
+
+  /* ----  sanitize IV  ---- */
+  if (!iv || iv <= 0 || iv > 5) iv = 0.25;   // 5 = 500 % cap
+  /* ----------------------- */
+
   const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
   const d2 = d1 - iv * Math.sqrt(T);
   const nd = x => 0.5 * (1 + Math.erf(x / Math.SQRT2));
@@ -153,11 +157,10 @@ try {
   const ror = (prem / maxLoss) * 100;
   const ann = ror * (365 / days);
   const ev = probOTM * prem - (1 - probOTM) * maxLoss;
-  /* ----  end math  ---- */
   setStatus('Done!', 100);
 } catch (e) {
   console.error('Math error:', e);
-  $('#err').textContent = 'Math error – check inputs (IV, strike, etc.)';
+  $('#err').textContent = 'Math error – check strike / expiry / IV.';
   hideProgress();
   return;
 }
