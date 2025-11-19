@@ -170,6 +170,32 @@ function nd(x){
   const ann = ror * (365 / days);
   const ev = probOTM * prem - (1 - probOTM) * maxLoss;
   setStatus('Done!', 100);
+    /* =====  FILL THE UI  ===== */
+  $('#prob').textContent   = fmt(probOTM * 100, 1);
+  $('#delta').textContent  = fmt(-putDelta, 3);        // seller delta
+  $('#otm').textContent    = fmt(((S - k) / S) * 100, 1);
+  $('#prem').textContent   = '$' + fmt(prem);
+  $('#maxp').textContent   = '$' + fmt(prem);
+  $('#be').textContent     = '$' + fmt(be);
+  $('#dte').textContent    = days;
+  $('#aret').textContent   = fmt(ann, 1);
+  $('#ror').textContent    = fmt(ror, 1);
+  $('#ev').textContent     = '$' + fmt(ev);
+  const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+  $('#risk').textContent   = riskLvl;
+  $('#risk').className     = 'metric-value risk-' + riskLvl.toLowerCase();
+
+  /* earnings hint (optional) */
+  if (opts && opts.options?.[0]?.expirationDates) {
+    const earnDates = opts.options[0].expirationDates.map(ts => new Date(ts * 1000));
+    const closest   = earnDates.find(d => d > now && d < exp);
+    if (closest) $('#earn').textContent = `⚠️  Earnings expected around ${closest.toLocaleDateString()}`;
+    $('#earn').classList.remove('hidden');
+  }
+
+  hideProgress();
+  $('#res').classList.remove('hidden');
+  /* ========================= */
 } catch (e) {
   console.error('Math error:', e);
   $('#err').textContent = 'Math error – check strike / expiry / IV.';
