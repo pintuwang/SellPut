@@ -138,6 +138,7 @@ $('#form').addEventListener('submit', async e => {
   }
 
   setStatus('Crunching numbers…', 90);
+try {
   /* ----  black-scholes & seller maths  ---- */
   const T = days / 365;
   const r = 0.045;
@@ -152,8 +153,15 @@ $('#form').addEventListener('submit', async e => {
   const ror = (prem / maxLoss) * 100;
   const ann = ror * (365 / days);
   const ev = probOTM * prem - (1 - probOTM) * maxLoss;
-
+  /* ----  end math  ---- */
   setStatus('Done!', 100);
+} catch (e) {
+  console.error('Math error:', e);
+  $('#err').textContent = 'Math error – check inputs (IV, strike, etc.)';
+  hideProgress();
+  return;
+}
+
 
   /* ----  fill results  ---- */
   $('#prob').textContent = fmt(probOTM * 100, 1);
