@@ -72,193 +72,97 @@
 const $ = q => document.querySelector(q);
 const fmt = (n, d = 2) => (+n || 0).toFixed(d);
 
-/* ----------  PROGRESS-BAR HELPERS  ---------- */
-const statusEl = $('#status');          // text line
-const progressBar = $('#progress');     // the bar itself
-const progressBox = $('#progressBox');  // container so we can hide/show
-
+/* ----------  progress helpers  ---------- */
+const statusEl = $('#status'), progressBar = $('#progress'), progressBox = $('#progressBox');
 function setStatus(txt, pct = 0) {
   if (statusEl) statusEl.textContent = txt;
   if (progressBar) progressBar.style.width = pct + '%';
 }
-function hideProgress() {
-  if (progressBox) progressBox.classList.add('hidden');
-}
-function showProgress() {
-  if (progressBox) progressBox.classList.remove('hidden');
-}
+function hideProgress() { progressBox.classList.add('hidden'); }
+function showProgress() { progressBox.classList.remove('hidden'); }
 
-/* ----------  YAHOO FETCH (with progress)  ---------- */
-async function yahoo(url) {
-  const proxy = 'https://api.allorigins.win/raw?url=';
+/* ----------  CORS proxy (working)  ---------- */
+const yahoo = async url => {
+  const proxy = 'https://corsproxy.io/?'; // no key required
   return fetch(proxy + encodeURIComponent(url))
-         .then(r => r.json())
+         .then(r => r.ok ? r.json() : Promise.reject(r.status))
          .catch(() => null);
-}
+};
 
-/* ----------  Tradier fallback IV (no key required)  ---------- */
+/* ----------  IV fallback (kept minimal)  ---------- */
 const getIV_Tradier = async (sym, strike, days) => {
-  // free, no-auth endpoint
-  const url = `https://api.tradier.com/v1/markets/options/chains?symbol=${sym}&expiration=${days}d`;
   try {
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const r = await fetch(`https://api.corsproxy.io/?https://api.tradier.com/v1/markets/options/chains?symbol=${sym}&expiration=${days}d`,
+                          { headers: { Accept: 'application/json' } });
     const j = await r.json();
     const chain = j?.options?.option?.find(p => Math.abs(p.strike - strike) < 0.5);
-    return (chain?.greeks?.mid_iv || 0) / 100; // convert % → decimal
+    return (chain?.greeks?.mid_iv || 0) / 100;
   } catch { return 0; }
 };
-  
-async function getQuote(sym) {
-  setStatus('Grabbing quote…', 25);
-  const data = await yahoo(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
-  return data?.chart?.result?.[0];
-}
-async function getOpts(sym) {
-  setStatus('Grabbing options…', 65);
-  const data = await yahoo(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
-  return data?.optionChain?.result?.[0];
-}
 
-/* ----------  MAIN ANALYSIS  ---------- */
+/* ----------  main flow  ---------- */
 $('#form').addEventListener('submit', async e => {
   e.preventDefault();
-
-  // --- reset UI ---
   $('#err').textContent = '';
   $('#res').classList.add('hidden');
-  showProgress();
-  setStatus('Starting…', 0);
+  showProgress(); setStatus('Starting…', 0);
 
   const sym = $('#sym').value.toUpperCase();
-  const k   = parseFloat($('#k').value);
+  const k = parseFloat($('#k').value);
   const sell = parseFloat($('#pr').value);
   const exp = new Date($('#exp').value);
   const now = new Date();
   const days = Math.ceil((exp - now) / 864e5);
+  if (days <= 0) { $('#err').textContent = 'Expiry must be in the future'; hideProgress(); return; }
 
-  if (days <= 0) {
-    $('#err').textContent = 'Expiry must be in the future';
-    hideProgress(); return;
-  }
+  const quote = await yahoo(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
+  if (!quote?.chart?.result?.[0]) { $('#err').textContent = 'Symbol not found'; hideProgress(); return; }
+  const S = quote.chart.result[0].meta.regularMarketPrice;
 
-  const quote = await getQuote(sym);
-  if (!quote) {
-    $('#err').textContent = 'Symbol not found (or network error)';
-    hideProgress(); return;
+  const opts = await yahoo(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
+  let iv = 0.25, src = 'Assumed 25%'; // declare src
+  if (opts?.optionChain?.result?.[0]) {
+    const chain = opts.optionChain.result[0].options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
+    if (chain) { iv = chain.impliedVolatility * 0.01; src = 'Yahoo'; }
   }
-  const S = quote.meta.regularMarketPrice;
-
-  const opts = await getOpts(sym);
-  let iv = 0.25;
-  if (opts) {
-    const chain = opts.options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
-    if (chain) iv = chain.impliedVolatility * 0.01;
-  }
+  if (!iv || iv <= 0 || iv > 5) { iv = await getIV_Tradier(sym, k, days); src = iv ? 'Tradier' : 'Assumed 25%'; }
 
   setStatus('Crunching numbers…', 90);
-try {
-  const T = days / 365;
-  const r = 0.045;
+  try {
+    const T = days / 365, r = 0.045;
+    const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
+    const d2 = d1 - iv * Math.sqrt(T);
+    function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+      const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+      return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+    const putDelta = nd(d1) - 1, probOTM = nd(d2);
+    const prem = sell * 100, maxLoss = (k - sell) * 100, be = k - sell, ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
+    const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+    const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
 
-  /* ----  safe IV  ---- */
-  /* ----  multi-source IV  ---- */
-if (!iv || iv <= 0 || iv > 5) {
-  iv = await getIV_Tradier(sym, k, days); // try Tradier
-  src = 'Tradier';
-}
-if (!iv || iv <= 0 || iv > 5) {
-  iv = 0.25; // ultimate fallback
-  src = 'Assumed 25%';
-}
-/* ---------------------------- */
+    setStatus('Done!', 100);
 
-  /* ----  black-scholes  ---- */
-  const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
-  const d2 = d1 - iv * Math.sqrt(T);
-  function nd(x){
-    const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
-    const sign=x>=0?1:-1; x=Math.abs(x)/Math.sqrt(2);
-    const t=1/(1+p*x),y=1-((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
-    return 0.5*(1+sign*y);
+    /* =====  fill UI  ===== */
+    $('#prob').textContent = fmt(probOTM * 100, 1);
+    $('#delta').textContent = fmt(-putDelta, 3);
+    $('#otm').textContent = fmt(((S - k) / S) * 100, 1);
+    $('#prem').textContent = '$' + fmt(prem); $('#maxp').textContent = '$' + fmt(prem);
+    $('#be').textContent = '$' + fmt(be); $('#dte').textContent = days;
+    $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1);
+    $('#ev').textContent = '$' + fmt(ev); $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+    $('#ivVal').textContent = fmt(iv * 100, 1) + '%'; $('#ivSrc').textContent = '(source: ' + src + ')';
+    $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+
+    if (opts?.optionChain?.result?.[0]?.options?.[0]?.expirationDates) {
+      const earn = opts.optionChain.result[0].options[0].expirationDates.map(ts => new Date(ts * 1000));
+      const closest = earn.find(d => d > now && d < exp);
+      if (closest) { $('#earn').textContent = `⚠️  Earnings expected around ${closest.toLocaleDateString()}`; $('#earn').classList.remove('hidden'); }
+    }
+    hideProgress(); $('#res').classList.remove('hidden');
+  } catch (e) {
+    console.error(e); $('#err').textContent = 'Math / network error – check inputs or try again.';
+    hideProgress();
   }
-  const putDelta = nd(d1) - 1;
-  const probOTM  = nd(d2);
-
-  /* ----  seller metrics  ---- */
-  const prem     = sell * 100;
-  const maxLoss  = (k - sell) * 100;
-  const be       = k - sell;
-  const ror      = (prem / maxLoss) * 100;
-  const ann      = ror * (365 / days);
-  const ev       = probOTM * prem - (1 - probOTM) * maxLoss;
-
-  setStatus('Done!', 100);
-
-  /* =====  FILL THE UI  ===== */
-  $('#prob').textContent = fmt(probOTM * 100, 1);
-  $('#delta').textContent= fmt(-putDelta, 3);
-  $('#otm').textContent  = fmt(((S - k) / S) * 100, 1);
-  $('#prem').textContent = '$' + fmt(prem);
-  $('#maxp').textContent = '$' + fmt(prem);
-  $('#be').textContent   = '$' + fmt(be);
-  $('#dte').textContent  = days;
-  $('#aret').textContent = fmt(ann, 1);
-  $('#ror').textContent  = fmt(ror, 1);
-  $('#ev').textContent   = '$' + fmt(ev);
-  /* ----  Daily earning & IV source  ---- */
-  const daily = prem / days;
-  $('#dailyEarn').textContent = '$' + fmt(daily, 2);
-  $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
-  $('#ivSrc').textContent = '(source: ' + src + ')';
-  /*$('#ivVal').textContent = fmt(iv * 100, 1) + '%';*/
-  /*$('#ivSrc').textContent = opts && chain ? '(Yahoo real data)' : '(Assumed 25%)'; */
-  const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
-  $('#risk').textContent = riskLvl;
-  $('#risk').className   = 'metric-value risk-' + riskLvl.toLowerCase();
-
-  /* earnings hint */
-  if (opts && opts.options?.[0]?.expirationDates) {
-    const earnDates = opts.options[0].expirationDates.map(ts => new Date(ts * 1000));
-    const closest   = earnDates.find(d => d > now && d < exp);
-    if (closest) $('#earn').textContent = `⚠️  Earnings expected around ${closest.toLocaleDateString()}`;
-    $('#earn').classList.remove('hidden');
-  }
-
-  hideProgress();
-  $('#res').classList.remove('hidden');
-  /* ========================= */
-} catch (e) {
-  console.error('Math error:', e);
-  $('#err').textContent = 'Math error – check strike / expiry / IV.';
-  hideProgress();
-}
-
-
-  /* ----  fill results  ---- */
-  $('#prob').textContent = fmt(probOTM * 100, 1);
-  $('#delta').textContent = fmt(-putDelta, 3);
-  $('#otm').textContent  = fmt(((S - k) / S) * 100, 1);
-  $('#prem').textContent = '$' + fmt(prem);
-  $('#maxp').textContent = '$' + fmt(prem);
-  $('#be').textContent   = '$' + fmt(be);
-  $('#dte').textContent  = days;
-  $('#aret').textContent = fmt(ann, 1);
-  $('#ror').textContent  = fmt(ror, 1);
-  $('#ev').textContent   = '$' + fmt(ev);
-  const risk = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
-  $('#risk').textContent = risk;
-  $('#risk').className = 'metric-value risk-' + risk.toLowerCase();
-
-  /* ----  earnings hint  ---- */
-  if (opts && opts.options[0]?.expirationDates) {
-    const earn = opts.options[0].expirationDates.map(e => new Date(e * 1000));
-    const closest = earn.find(d => d > now && d < exp);
-    if (closest) $('#earn').textContent = `⚠️  Earnings expected around ${closest.toLocaleDateString()}`;
-    $('#earn').classList.remove('hidden');
-  }
-
-  hideProgress();
-  $('#res').classList.remove('hidden');
 });
 </script>
 <!-- ============  END NEW SCRIPT  ============ -->
