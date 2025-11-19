@@ -32,6 +32,15 @@
         <label>Expiry<input id="exp" type="date" required></label>
         <label>Sell Price ($)<input id="pr" type="number" step="0.01" required></label>
         <button type="submit">Analyze</button>
+        <!-- progress bar & status -->
+  <div id="progressBox" class="hidden" style="margin-top:.8rem">
+    <div style="background:#334155;height:6px;border-radius:3px;overflow:hidden">
+    <div id="progress" style="height:100%;background:var(--accent);width:0;transition:width .25s"></div>
+  </div>
+  <small id="status" style="color:#94a3b8">Ready</small>
+</div>
+
+        
       </form>
       <p id="load" class="hidden">Loading…</p>
       <p id="err" style="color:var(--red)"></p>
