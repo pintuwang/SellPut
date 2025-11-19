@@ -191,6 +191,18 @@ $('#form').addEventListener('submit', async e => {
     $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
     $('#ivSrc').textContent = '(source: ' + src + ')';
     /* =====  IV override logic  ===== */
+if (src === 'Assumed 25%') {
+  $('#ivEdit').classList.remove('hidden');
+  $('#ivInput').value = fmt(iv * 100, 1);
+  $('#ivUpdate').onclick = function () {
+    const userIV = parseFloat($('#ivInput').value);
+    if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
+  };
+} else {
+  $('#ivEdit').classList.add('hidden');
+}
+/* =============================== */
+    /* =====  IV override logic  ===== */
   if (src === 'Assumed 25%') {           // only when no real data
     $('#ivEdit').classList.remove('hidden');
     $('#ivInput').value = fmt(iv * 100, 1);
@@ -219,20 +231,7 @@ $('#form').addEventListener('submit', async e => {
   }
 });
 
-  /* ----------  re-run only the math / UI with new IV  ---------- */
-/* =====  IV override logic  ===== */
-if (src === 'Assumed 25%') {
-  $('#ivEdit').classList.remove('hidden');
-  $('#ivInput').value = fmt(iv * 100, 1);
-  // attach handler **after** element exists
-  $('#ivUpdate').onclick = function () {
-    const userIV = parseFloat($('#ivInput').value);
-    if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
-  };
-} else {
-  $('#ivEdit').classList.add('hidden');
-}
-/* =============================== */
+
 </script>
 <!-- ============  END NEW SCRIPT  ============ -->
  </body>
