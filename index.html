@@ -148,7 +148,19 @@ try {
 
   const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
   const d2 = d1 - iv * Math.sqrt(T);
-  const nd = x => 0.5 * (1 + Math.erf(x / Math.SQRT2));
+  
+  /* ----  normal CDF (no Math.erf)  ---- */
+function nd(x){
+  // Abramowitz & Stegun 7.1.26 – max error 1.5e-7
+  const a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741,
+        a4 = -1.453152027, a5 =  1.061405429,  p  =  0.3275911;
+  const sign = x >= 0 ? 1 : -1;
+  x = Math.abs(x) / Math.sqrt(2);
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
+}
+/* ------------------------------------ */
   const putDelta = nd(d1) - 1;
   const probOTM = nd(d2);
   const prem = sell * 100;
