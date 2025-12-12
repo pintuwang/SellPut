@@ -197,6 +197,22 @@ $('#form').addEventListener('submit', async e => {
     $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#ev').textContent = '$' + fmt(ev);
     $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
     $('#ivSrc').textContent = '(source: ' + src + ')';
+
+    /* =====  IV override logic  ===== */
+   if (src === 'Assumed 25%') {
+    $('#ivEdit').classList.remove('hidden');
+    $('#ivInput').value = fmt(iv * 100, 1);
+    // attach handler **after** element exists
+    $('#ivUpdate').onclick = function () {
+    const userIV = parseFloat($('#ivInput').value);
+    if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
+      };
+    } else {
+  $('#ivEdit').classList.add('hidden');
+    }
+/* =============================== */
+
+    
     $('#ivPct').textContent = ivPct !== null ? ivPct + '%' : '--';
     $('#volPrem').textContent = volPrem !== null ? volPrem + '%' : '--';
     /* =====  IV override logic  ===== */
