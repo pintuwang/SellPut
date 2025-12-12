@@ -2,254 +2,237 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Sell Put Analyzer (Robust)</title>
+  <title>Sell Put Analyzer Live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{--bg:#0f172a;--card:#1e293b;--accent:#38bdf8;--green:#10b981;--red:#ef4444;--amber:#f59e0b}
-    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,"Open Sans","Helvetica Neue",sans-serif}
     body{background:var(--bg);color:#e2e8f0;line-height:1.6;padding:2rem}
     h1{text-align:center;margin-bottom:1rem}
     .grid{display:grid;gap:2rem;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
     .card{background:var(--card);padding:1.5rem;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
-    label{display:block;margin:.5rem 0 .25rem;font-weight:600;font-size:.9rem;color:#94a3b8}
-    input{width:100%;padding:.7rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff;font-size:1rem}
-    input:focus{outline:2px solid var(--accent);border-color:transparent}
-    button{width:100%;margin-top:1.5rem;padding:.75rem;border:none;border-radius:6px;background:var(--accent);color:#0f172a;font-weight:800;cursor:pointer;font-size:1rem;transition:filter .2s}
+    label{display:block;margin:.5rem 0 .25rem;font-weight:600;font-size:.9rem}
+    input{width:100%;padding:.6rem .8rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff}
+    button{width:100%;margin-top:1rem;padding:.75rem;border:none;border-radius:6px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
     button:hover{filter:brightness(1.15)}
-    .metric{display:flex;justify-content:space-between;padding:.8rem .5rem;border-bottom:1px solid #334155}
-    .metric:last-child{border-bottom:none}
-    .metric-value{font-weight:700;color:var(--accent);font-size:1.1rem}
-    .success-rate{font-size:2.5rem;text-align:center;margin:1.5rem 0;font-weight:800;color:var(--green)}
+    .metric{display:flex;justify-content:space-between;align-items:center;padding:.6rem .5rem;border-bottom:1px solid #334155}
+    .metric-value{font-weight:700;color:var(--accent)}
+    .success-rate{font-size:2rem;text-align:center;margin:1rem 0}
     .risk-low{color:var(--green)}.risk-medium{color:var(--amber)}.risk-high{color:var(--red)}
     .hidden{display:none}
-    .status-bar{height:4px;background:#334155;border-radius:2px;overflow:hidden;margin-top:1rem}
-    .progress{height:100%;background:var(--accent);width:0;transition:width .3s ease}
-    .manual-box{background:#334155;padding:1rem;border-radius:8px;margin-top:1rem;border:1px solid var(--amber)}
-    .manual-msg{color:var(--amber);font-size:0.9rem;margin-bottom:0.5rem;font-weight:bold}
   </style>
 </head>
 <body>
-  <h1>🎯 Sell Put Analyzer</h1>
-  
+  <h1>🎯 Sell Put Analyzer <span style="font-size:.5em">(Yahoo Finance Live)</span></h1>
   <div class="grid">
     <div class="card">
       <form id="form">
-        <label>Stock Symbol</label>
-        <input id="sym" placeholder="e.g. TSLA" style="text-transform:uppercase" required>
-        
-        <label>Strike Price ($)</label>
-        <input id="k" type="number" step="0.01" placeholder="e.g. 150" required>
-        
-        <label>Expiration Date</label>
-        <input id="exp" type="date" required>
-
-        <div id="manualInput" class="hidden manual-box">
-          <div class="manual-msg">⚠️ Yahoo API Failed (Blocked). Enter data manually:</div>
-          <label>Current Stock Price ($)</label>
-          <input id="manualStock" type="number" step="0.01">
-          <label>Option Premium Price ($)</label>
-          <input id="manualPrem" type="number" step="0.01" placeholder="Price per share (e.g. 2.50)">
-          <label>Implied Volatility (%)</label>
-          <input id="manualIV" type="number" step="0.1" value="50">
+        <label>Stock Symbol<input id="sym" placeholder="AAPL" required></label>
+        <label>Strike ($)<input id="k" type="number" step="0.01" required></label>
+        <label>Expiry<input id="exp" type="date" required></label>
+        <label>Sell Price ($)<input id="pr" type="number" step="0.01" required></label>
+        <button type="submit">Analyze</button>
+        <div id="progressBox" class="hidden" style="margin-top:.8rem">
+          <div style="background:#334155;height:6px;border-radius:3px;overflow:hidden">
+            <div id="progress" style="height:100%;background:var(--accent);width:0;transition:width .25s"></div>
+          </div>
+          <small id="status" style="color:#94a3b8">Ready</small>
         </div>
-
-        <button type="submit" id="btn">Analyze Trade</button>
-        
-        <div class="status-bar"><div id="progress" class="progress"></div></div>
-        <p id="status" style="text-align:center;font-size:0.85rem;margin-top:0.5rem;color:#94a3b8">Ready</p>
-        <p id="err" style="color:var(--red);text-align:center;margin-top:0.5rem;font-weight:bold"></p>
       </form>
+      <p id="load" class="hidden">Loading…</p>
+      <p id="err" style="color:var(--red)"></p>
     </div>
 
     <div class="card hidden" id="res">
-      <div class="metric" style="border:none;justify-content:center;padding-bottom:0">Probability of Profit</div>
-      <div class="success-rate"><span id="prob">--</span>%</div>
-      
-      <div class="metric"><span>Expected Move</span> <span id="em" class="metric-value">--</span></div>
-      <div class="metric"><span>Premium Credit</span> <span id="prem" class="metric-value">--</span></div>
-      <div class="metric"><span>Capital at Risk</span> <span id="riskCap" class="metric-value">--</span></div>
-      <div class="metric"><span>Breakeven</span> <span id="be" class="metric-value">--</span></div>
-      <div class="metric"><span>Ann. Return (RoR)</span> <span id="aret" class="metric-value">--</span></div>
-      <div class="metric"><span>Daily Theta/Income</span> <span id="daily" class="metric-value">--</span></div>
-      <div class="metric"><span>Implied Volatility</span> <span id="ivDisplay" class="metric-value">--</span></div>
-      <div class="metric"><span>Risk Level</span> <span id="riskLvl" class="metric-value">--</span></div>
+      <div class="success-rate">Prob of Success <span id="prob">--</span>%</div>
+      <div class="metric">Position Delta <span id="delta" class="metric-value">--</span></div>
+      <div class="metric">% OTM <span id="otm" class="metric-value">--</span>%</div>
+      <div class="metric">Premium <span id="prem" class="metric-value">--</span></div>
+      <div class="metric">Max Profit <span id="maxp" class="metric-value">--</span></div>
+      <div class="metric">Breakeven <span id="be" class="metric-value">--</span></div>
+      <div class="metric">Days to Exp <span id="dte" class="metric-value">--</span></div>
+      <div class="metric">Annual Ret <span id="aret" class="metric-value">--</span>%</div>
+      <div class="metric">Return/Risk <span id="ror" class="metric-value">--</span>%</div>
+      <div class="metric">Expected Val <span id="ev" class="metric-value">--</span></div>
+      <div class="metric">Daily Earning <span id="dailyEarn" class="metric-value">--</span></div>
+      <div class="metric">IV <span id="ivVal" class="metric-value">--</span> <small id="ivSrc" style="color:#94a3b8"></small>
+        <span id="ivEdit" class="hidden" style="margin-left:0.5rem">
+          <input id="ivInput" type="number" step="0.1" min="0" max="500" style="width:4.5rem;text-align:right;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:4px;padding:0.2rem 0.3rem;" title="% per year"> %
+          <button id="ivUpdate" class="iv-btn" style="margin-left:0.3rem;padding:0.2rem 0.5rem;font-size:0.75rem;background:var(--accent);border:none;border-radius:4px;color:#fff;cursor:pointer;">Update</button>
+        </span>
+      </div>
+      <div class="metric">IV Percentile (1 yr) <span id="ivPct" class="metric-value">--</span></div>
+      <div class="metric">Vol Premium vs 30 d HV <span id="volPrem" class="metric-value">--</span>%</div>
+      <div class="metric">Risk Level <span id="risk" class="metric-value">--</span></div>
+      <div id="earn" class="hidden" style="margin-top:1rem;color:var(--amber)"></div>
     </div>
   </div>
 
-<script>
-const $ = q => document.querySelector(q);
-const fmt = (n,d=2) => (+n||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+  <script>
+    let lastStockPrice = 0; // for IV override
 
-// Valid CORS Proxies (Yahoo often blocks these, but we try)
-const PROXIES = [
-  'https://corsproxy.io/?',
-  'https://api.allorigins.win/raw?url=' 
-];
+    const $ = q => document.querySelector(q);
+    const fmt = (n, d = 2) => (+n || 0).toFixed(d);
 
-// --- CORE FETCH LOGIC ---
-async function fetchYahoo(url) {
-  for (const proxy of PROXIES) {
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 5000); // 5s timeout
-      const res = await fetch(proxy + encodeURIComponent(url), { signal: controller.signal });
-      clearTimeout(id);
-      if (res.ok) return await res.json();
-    } catch (e) { console.warn(`Proxy ${proxy} failed`, e); }
-  }
-  return null;
-}
-
-// --- OPTION CHAIN FINDER ---
-async function getOptionData(sym, date, strike) {
-  // 1. Get current data to find Expiration Dates
-  const baseData = await fetchYahoo(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
-  
-  if (!baseData || !baseData.optionChain || !baseData.optionChain.result[0]) throw new Error("API_BLOCKED");
-
-  const result = baseData.optionChain.result[0];
-  const stockPrice = result.quote.regularMarketPrice;
-  const expirations = result.expirationDates; // Array of timestamps
-
-  // 2. Find closest expiration timestamp to user input
-  const userTime = date.getTime() / 1000;
-  // Find valid expiration closest to user input (within 24 hours)
-  const targetExp = expirations.find(t => Math.abs(t - userTime) < 86400 * 2);
-
-  if (!targetExp) {
-    // If exact date not found, just return stock price and tell user to check date
-    throw new Error(`Date not found in chain. Available: ${expirations.map(e => new Date(e*1000).toLocaleDateString()).join(', ')}`);
-  }
-
-  // 3. Fetch SPECIFIC chain for that date
-  const chainData = await fetchYahoo(`https://query1.finance.yahoo.com/v7/finance/options/${sym}?date=${targetExp}`);
-  const puts = chainData.optionChain.result[0].options[0].puts;
-  
-  // 4. Find the Strike
-  const opt = puts.find(p => Math.abs(p.strike - strike) < 0.1); // fuzzy match strike
-  
-  if (!opt) throw new Error(`Strike $${strike} not found for this date.`);
-
-  return {
-    price: stockPrice,
-    bid: opt.bid,
-    ask: opt.ask,
-    last: opt.lastPrice,
-    iv: opt.impliedVolatility
-  };
-}
-
-// --- MAIN HANDLER ---
-$('#form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const ui = {
-    sym: $('#sym').value.toUpperCase(),
-    k: parseFloat($('#k').value),
-    date: new Date($('#exp').value),
-    btn: $('#btn'),
-    err: $('#err'),
-    prog: $('#progress'),
-    stat: $('#status'),
-    res: $('#res'),
-    manual: $('#manualInput')
-  };
-
-  // Reset UI
-  ui.err.textContent = '';
-  ui.res.classList.add('hidden');
-  ui.prog.style.width = '20%';
-  ui.stat.textContent = 'Scanning Market Data...';
-  
-  // Check Manual Mode
-  const isManual = !ui.manual.classList.contains('hidden');
-
-  let stockPrice, prem, iv;
-
-  try {
-    if (isManual) {
-      // Manual Calculation Path
-      stockPrice = parseFloat($('#manualStock').value);
-      prem = parseFloat($('#manualPrem').value);
-      iv = parseFloat($('#manualIV').value) / 100;
-      if (!stockPrice || !prem) throw new Error("Please fill in manual fields");
-    
-    } else {
-      // API Fetch Path
-      ui.prog.style.width = '50%';
-      try {
-        const data = await getOptionData(ui.sym, ui.date, ui.k);
-        stockPrice = data.price;
-        iv = data.iv;
-        // Use Mid-price if available, else Last
-        prem = (data.bid && data.ask) ? (data.bid + data.ask) / 2 : data.last;
-        ui.stat.textContent = 'Data found! Calculating...';
-      } catch (err) {
-        console.error(err);
-        // TRIGGER MANUAL MODE
-        ui.manual.classList.remove('hidden');
-        ui.btn.textContent = "Recalculate (Manual)";
-        ui.stat.textContent = "API Error. Please enter price manually.";
-        ui.err.textContent = err.message === "API_BLOCKED" ? "Yahoo Connection Blocked (CORS). Enter data below." : err.message;
-        ui.prog.style.width = '0%';
-        return; // Stop here, let user fill manual inputs
-      }
+    /* ----------  proxy rotator  ---------- */
+    const proxies = ['https://corsproxy.io/?', 'https://api.codetabs.com/v1/proxy?quest='];
+    async function fetchJSON(url) {
+      for (const p of proxies) { try { const r = await fetch(p + encodeURIComponent(url)); if (r.ok) return await r.json(); } catch {} }
+      return null;
     }
 
-    // --- BLACK SCHOLES MATH ---
-    ui.prog.style.width = '90%';
-    const days = Math.ceil((ui.date - new Date()) / (1000 * 60 * 60 * 24));
-    const t = days / 365;
-    const r = 0.045; // Risk free rate 4.5%
-    
-    // d1 / d2 calculation
-    const d1 = (Math.log(stockPrice / ui.k) + (r + 0.5 * iv * iv) * t) / (iv * Math.sqrt(t));
-    const d2 = d1 - iv * Math.sqrt(t);
-    
-    // Cumulative Normal Distribution
-    const N = x => {
-      const b1 =  0.319381530, b2 = -0.356563782, b3 =  1.781477937, b4 = -1.821255978, b5 =  1.330274429;
-      const p  =  0.2316419, c  =  0.39894228;
-      if(x >= 0) {
-        const t = 1.0 / (1.0 + p * x);
-        return (1.0 - c * Math.exp(-x * x / 2.0) * t * (t * (t * (t * (t * b5 + b4) + b3) + b2) + b1));
-      } else {
-        const t = 1.0 / (1.0 + p * (-x));
-        return (c * Math.exp(-x * x / 2.0) * t * (t * (t * (t * (t * b5 + b4) + b3) + b2) + b1));
+    /* ----------  IV percentile + 30 d HV  ---------- */
+    async function getIVMetrics(sym) {
+      const data = await fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1y&interval=1d`);
+      if (!data?.chart?.result?.[0]) return { ivPct: null, hv30: null };
+      const closes = data.chart.result[0].indicators.quote[0].close.filter(c => c);
+      if (closes.length < 30) return { ivPct: null, hv30: null };
+      // 30-day historical volatility
+      let sumLog = 0, sumSq = 0;
+      for (let i = 1; i < 30; i++) {
+        const logRet = Math.log(closes[i] / closes[i - 1]);
+        sumLog += logRet; sumSq += logRet * logRet;
       }
-    };
+      const avgLog = sumLog / 29;
+      const varDaily = sumSq / 29 - avgLog * avgLog;
+      const hv30 = Math.sqrt(varDaily * 252) * 100;
+      // 1-year IV percentile
+      let daysBelow = 0, totalDays = 0;
+      for (let i = 30; i < closes.length; i++) {
+        let sum = 0, sq = 0;
+        for (let j = i - 29; j < i; j++) {
+          const lr = Math.log(closes[j + 1] / closes[j]);
+          sum += lr; sq += lr * lr;
+        }
+        const avg = sum / 29; const varD = sq / 29 - avg * avg;
+        const hv = Math.sqrt(varD * 252) * 100;
+        if (hv < hv30) daysBelow++;
+        totalDays++;
+      }
+      const ivPct = totalDays ? Math.round((daysBelow / totalDays) * 100) : null;
+      return { ivPct, hv30 };
+    }
 
-    const probProfit = N(d2); // Probability option expires OTM (Profit)
-    const delta = N(d1) - 1;  // Put Delta
-    
-    // --- DISPLAY RESULTS ---
-    const totalPrem = prem * 100;
-    const risk = (ui.k * 100) - totalPrem; // Cash Secured Put Risk
-    const annualRet = ((totalPrem / risk) * (365 / days)) * 100;
-    const expectedMove = stockPrice * iv * Math.sqrt(days/365);
+    /* ----------  Yahoo quote & chain  ---------- */
+    async function getQuote(sym) {
+      return fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
+    }
+    async function getOpts(sym) {
+      return fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
+    }
 
-    $('#prob').textContent = (probProfit * 100).toFixed(1);
-    $('#prem').textContent = `$${fmt(totalPrem)}`;
-    $('#riskCap').textContent = `$${fmt(risk)}`;
-    $('#be').textContent = `$${fmt(ui.k - prem)}`;
-    $('#aret').textContent = `${fmt(annualRet)}%`;
-    $('#daily').textContent = `$${fmt(totalPrem / days)}`;
-    $('#em').textContent = `±$${fmt(expectedMove)}`;
-    $('#ivDisplay').textContent = `${(iv*100).toFixed(1)}%`;
-    
-    const riskEl = $('#riskLvl');
-    if(probProfit > 0.75) { riskEl.textContent = "Conservatives"; riskEl.className = "metric-value risk-low"; }
-    else if(probProfit > 0.60) { riskEl.textContent = "Aggressive"; riskEl.className = "metric-value risk-medium"; }
-    else { riskEl.textContent = "High Risk"; riskEl.className = "metric-value risk-high"; }
+    /* ----------  main flow  ---------- */
+    $('#form').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('#err').textContent = ''; $('#res').classList.add('hidden');
+      const statusEl = $('#status'), progressBar = $('#progress'), progressBox = $('#progressBox');
+      function setStatus(txt, pct = 0) { if (statusEl) statusEl.textContent = txt; if (progressBar) progressBar.style.width = pct + '%'; }
+      function hideProgress() { progressBox.classList.add('hidden'); } function showProgress() { progressBox.classList.remove('hidden'); }
+      showProgress(); setStatus('Starting…', 0);
 
-    ui.res.classList.remove('hidden');
-    ui.prog.style.width = '100%';
-    ui.stat.textContent = 'Analysis Complete';
+      const sym = $('#sym').value.toUpperCase();
+      const k = parseFloat($('#k').value);
+      const sell = parseFloat($('#pr').value);
+      const exp = new Date($('#exp').value);
+      const now = new Date();
+      const days = Math.ceil((exp - now) / 864e5);
+      if (days <= 0) { $('#err').textContent = 'Expiry must be in the future'; hideProgress(); return; }
 
-  } catch (e) {
-    ui.err.textContent = "Error: " + e.message;
-  }
-});
-</script>
+      const quote = await getQuote(sym);
+      if (!quote) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
+      const S = quote?.meta?.regularMarketPrice ?? 0;
+      if (!S) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
+      window.lastStockPrice = S; // for IV override
+
+      const opts = await getOpts(sym);
+      let iv = 0.25, src = 'Assumed 25%';
+      if (opts?.optionChain?.result?.[0]) {
+        const chain = opts.optionChain.result[0].options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
+        if (chain) { iv = chain.impliedVolatility * 0.01; src = 'Yahoo'; }
+      }
+      if (!iv || iv <= 0 || iv > 5) iv = 0.25; // ultimate fallback
+
+      /* ----  new metrics  ---- */
+      const { ivPct, hv30 } = await getIVMetrics(sym);
+      let volPrem = null; if (hv30 && iv) volPrem = fmt((iv * 100 - hv30) / hv30 * 100, 1);
+
+      setStatus('Crunching numbers…', 90);
+      try {
+        const T = days / 365, r = 0.045;
+        const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
+        const d2 = d1 - iv * Math.sqrt(T);
+        function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+          const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+          return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+        const putDelta = nd(d1) - 1, probOTM = nd(d2);
+        const prem = sell * 100, maxLoss = (k - sell) * 100, be = k - sell, ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
+        const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+        const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+
+        setStatus('Done!', 100);
+        $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
+        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#prem').textContent = '$' + fmt(prem);
+        $('#maxp').textContent = '$' + fmt(prem); $('#be').textContent = '$' + fmt(be); $('#dte').textContent = days;
+        $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#ev').textContent = '$' + fmt(ev);
+        $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
+        $('#ivSrc').textContent = '(source: ' + src + ')';
+        $('#ivPct').textContent = ivPct !== null ? ivPct + '%' : '--';
+        $('#volPrem').textContent = volPrem !== null ? volPrem + '%' : '--';
+
+        /* =====  IV override logic  ===== */
+        if (src === 'Assumed 25%') {
+          $('#ivEdit').classList.remove('hidden');
+          $('#ivInput').value = fmt(iv * 100, 1);
+          $('#ivUpdate').onclick = function () {
+            const userIV = parseFloat($('#ivInput').value);
+            if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
+          };
+        } else { $('#ivEdit').classList.add('hidden'); }
+
+        $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+        hideProgress(); $('#res').classList.remove('hidden');
+      } catch (e) {
+        console.error(e); $('#err').textContent = 'Math / network error – check inputs or try again.';
+        hideProgress();
+      }
+    });
+
+    /* ----------  re-calc with user IV (self-contained)  ---------- */
+    function reCalculateWithIV(newIV) {
+      const $ = q => document.querySelector(q);
+      const fmt = (n, d = 2) => (+n || 0).toFixed(d);
+      const setStatus = (txt, pct = 0) => {
+        const bar = $('#progress'), status = $('#status');
+        if (status) status.textContent = txt;
+        if (bar) bar.style.width = pct + '%';
+      };
+      const hideProgress = () => $('#progressBox').classList.add('hidden');
+
+      hideProgress(); setStatus('Recalculating…', 50);
+      try {
+        const k = parseFloat($('#k').value), sell = parseFloat($('#pr').value);
+        const exp = new Date($('#exp').value), now = new Date(), days = Math.ceil((exp - now) / 864e5);
+        const S = window.lastStockPrice, T = days / 365, r = 0.045, prem = sell * 100, maxLoss = (k - sell) * 100;
+        const d1 = (Math.log(S / k) + (r + 0.5 * newIV * newIV) * T) / (newIV * Math.sqrt(T));
+        const d2 = d1 - newIV * Math.sqrt(T);
+        function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+          const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+          return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+        const putDelta = nd(d1) - 1, probOTM = nd(d2);
+        const ror = (prem / maxLoss) * 100, ann = ror * (365 / days), ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+        const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+        setStatus('Done!', 100);
+        $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
+        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#ev').textContent = '$' + fmt(ev);
+        $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+        $('#ivVal').textContent = fmt(newIV * 100, 1) + '%'; $('#ivSrc').textContent = '(user override)';
+        $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+        hideProgress();
+      } catch (e) {
+        console.error(e); $('#err').textContent = 'Override error: ' + e.message;
+        hideProgress();
+      }
+    }
+  </script>
 </body>
 </html>
