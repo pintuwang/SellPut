@@ -153,7 +153,7 @@ $('#form').addEventListener('submit', async e => {
   if (days <= 0) { $('#err').textContent = 'Expiry must be in the future'; hideProgress(); return; }
 
   const quote = await getQuote(sym);
-  if (!quote) { $('#err').textContent = 'Symbol not found'; hideProgress(); return; }
+  if (!quote) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
  
   const S = quote?.meta?.regularMarketPrice ?? 0;
   if (!S) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
