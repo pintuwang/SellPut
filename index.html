@@ -93,28 +93,24 @@ async function fetchJSON(url) {
   return null;
 }
 
-/* ----------  new: IV percentile + 30 d HV  ---------- */
+/* ----------  IV percentile + 30 d HV  ---------- */
 async function getIVMetrics(sym) {
-  // Schwab-style 1-year IV percentile + 30-day historical vol
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1y&interval=1d`;
-  const data = await fetchJSON(url);
+  const data = await fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1y&interval=1d`);
   if (!data?.chart?.result?.[0]) return { ivPct: null, hv30: null };
-  const quotes = data.chart.result[0].indicators.quote[0];
-  const closes = quotes.close.filter(c => c);           // remove nulls
+  const closes = data.chart.result[0].indicators.quote[0].close.filter(c => c);
   if (closes.length < 30) return { ivPct: null, hv30: null };
 
-  // 30-day historical volatility (annualised)
+  // 30-day historical volatility
   let sumLog = 0, sumSq = 0;
   for (let i = 1; i < 30; i++) {
     const logRet = Math.log(closes[i] / closes[i - 1]);
-    sumLog += logRet;
-    sumSq += logRet * logRet;
+    sumLog += logRet; sumSq += logRet * logRet;
   }
   const avgLog = sumLog / 29;
   const varDaily = sumSq / 29 - avgLog * avgLog;
-  const hv30 = Math.sqrt(varDaily * 252) * 100; // annualised %
+  const hv30 = Math.sqrt(varDaily * 252) * 100;
 
-  // IV percentile: count how many of the last 252 days had **close-to-close HV** below today’s 30-day HV
+  // 1-year IV percentile
   let daysBelow = 0, totalDays = 0;
   for (let i = 30; i < closes.length; i++) {
     let sum = 0, sq = 0;
@@ -133,12 +129,10 @@ async function getIVMetrics(sym) {
 
 /* ----------  Yahoo quote & chain  ---------- */
 async function getQuote(sym) {
-  const data = await fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
-  return data?.chart?.result?.[0];
+  return fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
 }
 async function getOpts(sym) {
-  const data = await fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
-  return data?.optionChain?.result?.[0];
+  return fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
 }
 
 /* ----------  main flow  ---------- */
@@ -169,13 +163,11 @@ $('#form').addEventListener('submit', async e => {
     const chain = opts.optionChain.result[0].options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
     if (chain) { iv = chain.impliedVolatility * 0.01; src = 'Yahoo'; }
   }
-  if (!iv || iv <= 0 || iv > 5) { iv = await getIV_Tradier(sym, k); src = iv ? 'Tradier' : src; }
-  if (!iv || iv <= 0 || iv > 5) iv = 0.25;
+  if (!iv || iv <= 0 || iv > 5) iv = 0.25; // ultimate fallback
 
   /* ----  new metrics  ---- */
   const { ivPct, hv30 } = await getIVMetrics(sym);
-  let volPrem = null;
-  if (hv30 && iv) volPrem = fmt((iv * 100 - hv30) / hv30 * 100, 1);
+  let volPrem = null; if (hv30 && iv) volPrem = fmt((iv * 100 - hv30) / hv30 * 100, 1);
 
   setStatus('Crunching numbers…', 90);
   try {
@@ -197,33 +189,19 @@ $('#form').addEventListener('submit', async e => {
     $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#ev').textContent = '$' + fmt(ev);
     $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
     $('#ivSrc').textContent = '(source: ' + src + ')';
-
-    /* =====  IV override logic  ===== */
-   if (src === 'Assumed 25%') {
-    $('#ivEdit').classList.remove('hidden');
-    $('#ivInput').value = fmt(iv * 100, 1);
-    // attach handler **after** element exists
-    $('#ivUpdate').onclick = function () {
-    const userIV = parseFloat($('#ivInput').value);
-    if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
-      };
-    } else {
-  $('#ivEdit').classList.add('hidden');
-    }
-/* =============================== */
-
-    
     $('#ivPct').textContent = ivPct !== null ? ivPct + '%' : '--';
     $('#volPrem').textContent = volPrem !== null ? volPrem + '%' : '--';
+
     /* =====  IV override logic  ===== */
     if (src === 'Assumed 25%') {
       $('#ivEdit').classList.remove('hidden');
       $('#ivInput').value = fmt(iv * 100, 1);
-      $('#ivUpdate').onclick = () => {
+      $('#ivUpdate').onclick = function () {
         const userIV = parseFloat($('#ivInput').value);
         if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
       };
     } else { $('#ivEdit').classList.add('hidden'); }
+
     $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
     hideProgress(); $('#res').classList.remove('hidden');
   } catch (e) {
@@ -232,8 +210,7 @@ $('#form').addEventListener('submit', async e => {
   }
 });
 
-/* ----------  re-calc with user IV  ---------- */
-/* ----------  re-calc with user IV  (self-contained)  ---------- */
+/* ----------  re-calc with user IV (self-contained)  ---------- */
 function reCalculateWithIV(newIV) {
   const $ = q => document.querySelector(q);
   const fmt = (n, d = 2) => (+n || 0).toFixed(d);
@@ -268,9 +245,8 @@ function reCalculateWithIV(newIV) {
     console.error(e); $('#err').textContent = 'Override error: ' + e.message;
     hideProgress();
   }
-
-
-}</script>
+}
+</script>
 <!-- ============  END NEW SCRIPT  ============ -->
  </body>
 </html>
