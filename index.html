@@ -69,24 +69,36 @@
   </div>
 
   <script>
-    let lastStockPrice = 0; // for IV override
+    let lastStockPrice = 0; 
 
     const $ = q => document.querySelector(q);
     const fmt = (n, d = 2) => (+n || 0).toFixed(d);
 
-    /* ----------  proxy rotator  ---------- */
-    const proxies = ['https://corsproxy.io/?', 'https://api.codetabs.com/v1/proxy?quest='];
+    /* ---------- PROXY ROTATOR (Updated) ---------- */
+    // Added 'allorigins' which is often more reliable for JSON than corsproxy.io
+    const proxies = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?'
+    ];
+
     async function fetchJSON(url) {
-      for (const p of proxies) { try { const r = await fetch(p + encodeURIComponent(url)); if (r.ok) return await r.json(); } catch {} }
+      for (const p of proxies) { 
+        try { 
+            const r = await fetch(p + encodeURIComponent(url)); 
+            if (r.ok) return await r.json(); 
+        } catch (e) { console.log("Proxy failed, trying next..."); } 
+      }
       return null;
     }
 
-    /* ----------  IV percentile + 30 d HV  ---------- */
+    /* ---------- IV & HV METRICS ---------- */
     async function getIVMetrics(sym) {
       const data = await fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?range=1y&interval=1d`);
       if (!data?.chart?.result?.[0]) return { ivPct: null, hv30: null };
+      
       const closes = data.chart.result[0].indicators.quote[0].close.filter(c => c);
       if (closes.length < 30) return { ivPct: null, hv30: null };
+
       // 30-day historical volatility
       let sumLog = 0, sumSq = 0;
       for (let i = 1; i < 30; i++) {
@@ -96,6 +108,7 @@
       const avgLog = sumLog / 29;
       const varDaily = sumSq / 29 - avgLog * avgLog;
       const hv30 = Math.sqrt(varDaily * 252) * 100;
+
       // 1-year IV percentile
       let daysBelow = 0, totalDays = 0;
       for (let i = 30; i < closes.length; i++) {
@@ -113,124 +126,201 @@
       return { ivPct, hv30 };
     }
 
-    /* ----------  Yahoo quote & chain  ---------- */
+    /* ---------- YAHOO QUOTE & OPTION CHAIN ---------- */
     async function getQuote(sym) {
-      return fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`);
-    }
-    async function getOpts(sym) {
-      return fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
+      return fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`);
     }
 
-    /* ----------  main flow  ---------- */
+    // FIXED: Now accepts the Date to fetch the correct chain
+    async function getOpts(sym, targetDate) {
+      // 1. Get List of Expirations
+      const baseData = await fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}`);
+      if (!baseData?.optionChain?.result?.[0]) return null;
+
+      const expirations = baseData.optionChain.result[0].expirationDates;
+      if (!expirations) return baseData; // Return default if no dates found
+
+      // 2. Find timestamp closest to user input (within 24h)
+      const targetTs = targetDate.getTime() / 1000;
+      const bestMatch = expirations.find(ts => Math.abs(ts - targetTs) < 86400 * 2);
+
+      // 3. Fetch specific date chain if found, else return default
+      if (bestMatch) {
+          console.log(`Fetching specific chain for timestamp: ${bestMatch}`);
+          return fetchJSON(`https://query1.finance.yahoo.com/v7/finance/options/${sym}?date=${bestMatch}`);
+      }
+      return baseData;
+    }
+
+    /* ---------- MAIN LOGIC ---------- */
     $('#form').addEventListener('submit', async e => {
       e.preventDefault();
       $('#err').textContent = ''; $('#res').classList.add('hidden');
+      
       const statusEl = $('#status'), progressBar = $('#progress'), progressBox = $('#progressBox');
       function setStatus(txt, pct = 0) { if (statusEl) statusEl.textContent = txt; if (progressBar) progressBar.style.width = pct + '%'; }
-      function hideProgress() { progressBox.classList.add('hidden'); } function showProgress() { progressBox.classList.remove('hidden'); }
-      showProgress(); setStatus('Starting…', 0);
+      function hideProgress() { progressBox.classList.add('hidden'); } 
+      function showProgress() { progressBox.classList.remove('hidden'); }
+      
+      showProgress(); setStatus('Starting…', 10);
 
       const sym = $('#sym').value.toUpperCase();
       const k = parseFloat($('#k').value);
       const sell = parseFloat($('#pr').value);
-      const exp = new Date($('#exp').value);
+      const expInput = $('#exp').value;
+      const exp = new Date(expInput);
       const now = new Date();
       const days = Math.ceil((exp - now) / 864e5);
+
       if (days <= 0) { $('#err').textContent = 'Expiry must be in the future'; hideProgress(); return; }
 
+      // 1. Fetch Price
+      setStatus('Fetching Stock Price...', 30);
       const quote = await getQuote(sym);
-      if (!quote) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
-      const S = quote?.meta?.regularMarketPrice ?? 0;
-      if (!S) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
-      window.lastStockPrice = S; // for IV override
-
-      const opts = await getOpts(sym);
-      let iv = 0.25, src = 'Assumed 25%';
-      if (opts?.optionChain?.result?.[0]) {
-        const chain = opts.optionChain.result[0].options[0]?.puts.find(p => fmt(p.strike) === fmt(k));
-        if (chain) { iv = chain.impliedVolatility * 0.01; src = 'Yahoo'; }
+      const S = quote?.chart?.result?.[0]?.meta?.regularMarketPrice || 0;
+      
+      if (!S) { 
+          $('#err').textContent = 'Could not fetch Price. Check symbol or Proxy.'; 
+          hideProgress(); return; 
       }
-      if (!iv || iv <= 0 || iv > 5) iv = 0.25; // ultimate fallback
+      window.lastStockPrice = S; 
 
-      /* ----  new metrics  ---- */
+      // 2. Fetch Options (IV)
+      setStatus('Fetching Option Chain...', 50);
+      const opts = await getOpts(sym, exp);
+      
+      let iv = 0.25, src = 'Assumed 25%';
+      
+      if (opts?.optionChain?.result?.[0]) {
+        // Try to find the put at this strike
+        const puts = opts.optionChain.result[0].options[0]?.puts || [];
+        // Fuzzy match strike (floating point safety)
+        const chainItem = puts.find(p => Math.abs(p.strike - k) < 0.1);
+        
+        if (chainItem && chainItem.impliedVolatility > 0) {
+            iv = chainItem.impliedVolatility; // Yahoo IV is usually just a decimal number like 0.45 or 45%? 
+            // NOTE: Yahoo API usually returns e.g. 0.453. Some endpoints return 45.3.
+            // We check: if it's > 5 (likely percentage), divide by 100.
+            // Actually Yahoo v7 usually returns 0.xx format, but let's be safe:
+            if(iv > 5) iv = iv / 100;
+            src = 'Yahoo Finance'; 
+        } else {
+            src = 'Strike Not Found (Using 25%)';
+        }
+      } else {
+         src = 'Data Blocked (Using 25%)';
+      }
+
+      // 3. Fetch Historical Data (HV)
+      setStatus('Calculating Volatility...', 70);
       const { ivPct, hv30 } = await getIVMetrics(sym);
-      let volPrem = null; if (hv30 && iv) volPrem = fmt((iv * 100 - hv30) / hv30 * 100, 1);
+      let volPrem = null; 
+      if (hv30 && iv) volPrem = fmt((iv * 100 - hv30) / hv30 * 100, 1);
 
-      setStatus('Crunching numbers…', 90);
+      setStatus('Finalizing...', 90);
       try {
         const T = days / 365, r = 0.045;
         const d1 = (Math.log(S / k) + (r + 0.5 * iv * iv) * T) / (iv * Math.sqrt(T));
         const d2 = d1 - iv * Math.sqrt(T);
-        function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-          const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
-          return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+        
+        function nd(x) { 
+            const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+            const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+            return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); 
+        }
+        
         const putDelta = nd(d1) - 1, probOTM = nd(d2);
-        const prem = sell * 100, maxLoss = (k - sell) * 100, be = k - sell, ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
+        const prem = sell * 100, maxLoss = (k - sell) * 100, be = k - sell;
+        const ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
         const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
         const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
 
         setStatus('Done!', 100);
-        $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
-        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#prem').textContent = '$' + fmt(prem);
-        $('#maxp').textContent = '$' + fmt(prem); $('#be').textContent = '$' + fmt(be); $('#dte').textContent = days;
-        $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#ev').textContent = '$' + fmt(ev);
-        $('#dailyEarn').textContent = '$' + fmt(daily, 2); $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
-        $('#ivSrc').textContent = '(source: ' + src + ')';
+        $('#prob').textContent = fmt(probOTM * 100, 1); 
+        $('#delta').textContent = fmt(putDelta, 3); // Removed extra negative sign, putDelta is naturally negative
+        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); 
+        $('#prem').textContent = '$' + fmt(prem);
+        $('#maxp').textContent = '$' + fmt(prem); 
+        $('#be').textContent = '$' + fmt(be); 
+        $('#dte').textContent = days;
+        $('#aret').textContent = fmt(ann, 1); 
+        $('#ror').textContent = fmt(ror, 1); 
+        $('#ev').textContent = '$' + fmt(ev);
+        $('#dailyEarn').textContent = '$' + fmt(daily, 2); 
+        $('#ivVal').textContent = fmt(iv * 100, 1) + '%';
+        $('#ivSrc').textContent = '(' + src + ')';
         $('#ivPct').textContent = ivPct !== null ? ivPct + '%' : '--';
         $('#volPrem').textContent = volPrem !== null ? volPrem + '%' : '--';
 
-        /* =====  IV override logic  ===== */
-        if (src === 'Assumed 25%') {
+        // Show edit button if data was missing/assumed
+        if (src.includes('Assumed') || src.includes('Not Found') || src.includes('Blocked')) {
           $('#ivEdit').classList.remove('hidden');
           $('#ivInput').value = fmt(iv * 100, 1);
+          
           $('#ivUpdate').onclick = function () {
             const userIV = parseFloat($('#ivInput').value);
             if (userIV > 0 && userIV <= 500) reCalculateWithIV(userIV / 100);
           };
-        } else { $('#ivEdit').classList.add('hidden'); }
+        } else { 
+            $('#ivEdit').classList.add('hidden'); 
+        }
 
-        $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
-        hideProgress(); $('#res').classList.remove('hidden');
+        $('#risk').textContent = riskLvl; 
+        $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+        
+        hideProgress(); 
+        $('#res').classList.remove('hidden');
       } catch (e) {
-        console.error(e); $('#err').textContent = 'Math / network error – check inputs or try again.';
+        console.error(e); 
+        $('#err').textContent = 'Calculation error. Please check inputs.';
         hideProgress();
       }
     });
 
-    /* ----------  re-calc with user IV (self-contained)  ---------- */
+    /* ---------- RE-CALC FUNCTION ---------- */
     function reCalculateWithIV(newIV) {
       const $ = q => document.querySelector(q);
       const fmt = (n, d = 2) => (+n || 0).toFixed(d);
-      const setStatus = (txt, pct = 0) => {
-        const bar = $('#progress'), status = $('#status');
-        if (status) status.textContent = txt;
-        if (bar) bar.style.width = pct + '%';
-      };
-      const hideProgress = () => $('#progressBox').classList.add('hidden');
+      const setStatus = (txt) => { $('#status').textContent = txt; };
 
-      hideProgress(); setStatus('Recalculating…', 50);
+      setStatus('Recalculating with new IV...');
       try {
         const k = parseFloat($('#k').value), sell = parseFloat($('#pr').value);
-        const exp = new Date($('#exp').value), now = new Date(), days = Math.ceil((exp - now) / 864e5);
-        const S = window.lastStockPrice, T = days / 365, r = 0.045, prem = sell * 100, maxLoss = (k - sell) * 100;
+        const exp = new Date($('#exp').value), now = new Date();
+        const days = Math.ceil((exp - now) / 864e5);
+        const S = window.lastStockPrice, T = days / 365, r = 0.045;
+        const prem = sell * 100, maxLoss = (k - sell) * 100;
+
         const d1 = (Math.log(S / k) + (r + 0.5 * newIV * newIV) * T) / (newIV * Math.sqrt(T));
         const d2 = d1 - newIV * Math.sqrt(T);
-        function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-          const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
-          return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+        
+        function nd(x) { 
+            const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+            const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+            return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); 
+        }
+        
         const putDelta = nd(d1) - 1, probOTM = nd(d2);
-        const ror = (prem / maxLoss) * 100, ann = ror * (365 / days), ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+        const ror = (prem / maxLoss) * 100, ann = ror * (365 / days);
+        const ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
         const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
-        setStatus('Done!', 100);
-        $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
-        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#ev').textContent = '$' + fmt(ev);
-        $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#dailyEarn').textContent = '$' + fmt(daily, 2);
-        $('#ivVal').textContent = fmt(newIV * 100, 1) + '%'; $('#ivSrc').textContent = '(user override)';
-        $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
-        hideProgress();
+
+        $('#prob').textContent = fmt(probOTM * 100, 1); 
+        $('#delta').textContent = fmt(putDelta, 3);
+        $('#otm').textContent = fmt(((S - k) / S) * 100, 1); 
+        $('#ev').textContent = '$' + fmt(ev);
+        $('#aret').textContent = fmt(ann, 1); 
+        $('#ror').textContent = fmt(ror, 1); 
+        $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+        $('#ivVal').textContent = fmt(newIV * 100, 1) + '%'; 
+        $('#ivSrc').textContent = '(User Override)';
+        $('#risk').textContent = riskLvl; 
+        $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+        
+        setStatus('Ready');
       } catch (e) {
-        console.error(e); $('#err').textContent = 'Override error: ' + e.message;
-        hideProgress();
+        console.error(e); 
+        setStatus('Error calculating');
       }
     }
   </script>
