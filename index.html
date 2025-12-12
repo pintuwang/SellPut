@@ -154,7 +154,11 @@ $('#form').addEventListener('submit', async e => {
 
   const quote = await getQuote(sym);
   if (!quote) { $('#err').textContent = 'Symbol not found'; hideProgress(); return; }
-  const S = quote.meta.regularMarketPrice;
+ 
+  const S = quote?.meta?.regularMarketPrice ?? 0;
+  if (!S) { $('#err').textContent = 'No price data – check symbol or network.'; hideProgress(); return; }
+
+  
   window.lastStockPrice = S; // for IV override
 
   const opts = await getOpts(sym);
