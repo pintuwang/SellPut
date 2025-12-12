@@ -234,6 +234,42 @@ $('#form').addEventListener('submit', async e => {
 
 /* ----------  re-calc with user IV  ---------- */
 function reCalculateWithIV(newIV) {
+ 
+  /* ----  local helpers (so we don’t depend on outer scope)  ---- */
+  const $ = q => document.querySelector(q);
+  const fmt = (n, d = 2) => (+n || 0).toFixed(d);
+  const setStatus = (txt, pct = 0) => {
+    const bar = $('#progress'), status = $('#status');
+    if (status) status.textContent = txt;
+    if (bar) bar.style.width = pct + '%';
+  };
+  const hideProgress = () => $('#progressBox').classList.add('hidden');
+  /* ------------------------------------------------------------ */
+  hideProgress(); setStatus('Recalculating…', 50);
+  try {
+    const k = parseFloat($('#k').value), sell = parseFloat($('#pr').value);
+    const exp = new Date($('#exp').value), now = new Date(), days = Math.ceil((exp - now) / 864e5);
+    const S = window.lastStockPrice, T = days / 365, r = 0.045, prem = sell * 100, maxLoss = (k - sell) * 100;
+    const d1 = (Math.log(S / k) + (r + 0.5 * newIV * newIV) * T) / (newIV * Math.sqrt(T));
+    const d2 = d1 - newIV * Math.sqrt(T);
+    function nd(x) { const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+      const sign = x >= 0 ? 1 : -1, b = Math.abs(x) / Math.sqrt(2), t = 1 / (1 + p * b);
+      return 0.5 * (1 + sign * (1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-b * b)))); }
+    const putDelta = nd(d1) - 1, probOTM = nd(d2);
+    const ror = (prem / maxLoss) * 100, ann = ror * (365 / days), ev = probOTM * prem - (1 - probOTM) * maxLoss, daily = prem / days;
+    const riskLvl = probOTM > 0.8 ? 'Low' : probOTM > 0.65 ? 'Medium' : 'High';
+    setStatus('Done!', 100);
+    $('#prob').textContent = fmt(probOTM * 100, 1); $('#delta').textContent = fmt(-putDelta, 3);
+    $('#otm').textContent = fmt(((S - k) / S) * 100, 1); $('#ev').textContent = '$' + fmt(ev);
+    $('#aret').textContent = fmt(ann, 1); $('#ror').textContent = fmt(ror, 1); $('#dailyEarn').textContent = '$' + fmt(daily, 2);
+    $('#ivVal').textContent = fmt(newIV * 100, 1) + '%'; $('#ivSrc').textContent = '(user override)';
+    $('#risk').textContent = riskLvl; $('#risk').className = 'metric-value risk-' + riskLvl.toLowerCase();
+    hideProgress();
+  } catch (e) {
+    console.error(e); $('#err').textContent = 'Override error: ' + e.message;
+    hideProgress();
+  }
+}
   hideProgress(); setStatus('Recalculating…', 50);
   try {
     const k = parseFloat($('#k').value), sell = parseFloat($('#pr').value), exp = new Date($('#exp').value);
